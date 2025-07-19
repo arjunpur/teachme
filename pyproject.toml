@@ -1,0 +1,33 @@
+[project]
+name = "teachme"
+version = "0.1.0"
+description = "Convert natural language prompts into educational content with animations"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "manim>=0.19.0",
+    "openai>=1.97.0",
+    "typer>=0.16.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.1.1",
+]
+
+[project.scripts]
+teachme = "teachme.cli:app"
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["teachme*"]
+
+[tool.uv]
+package = true
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.1.0",
+]
