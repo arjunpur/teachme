@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from teachme.agents.animation import AnimationGenerator
+from teachme.agents.animation import ManimCodeGenerator
 from teachme.models.schemas import ManimScriptResponse
 
 
@@ -41,7 +41,7 @@ class TestCircle(Scene):
             mock_llm_instance.generate_json_response.return_value = mock_response
             mock_llm_class.return_value = mock_llm_instance
             
-            generator = AnimationGenerator(output_dir=output_dir)
+            generator = ManimCodeGenerator(output_dir=output_dir)
             
             # Test input
             input_data = {

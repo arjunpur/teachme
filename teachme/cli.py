@@ -12,7 +12,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 # Load environment variables from .env file
 load_dotenv()
 
-from .agents.animation import AnimationGenerator
+from .agents.animation import ManimCodeGenerator
 from .agents.subject_matter import SubjectMatterAgent
 from .utils.llm_client import LLMClient
 
@@ -39,7 +39,7 @@ def animate(
                 console.print("[blue]Initializing animation system...[/blue]")
             
             llm_client = LLMClient(api_key=api_key, verbose=verbose)
-            animation_generator = AnimationGenerator(output_dir=output_dir, llm_client=llm_client)
+            animation_generator = ManimCodeGenerator(output_dir=output_dir, llm_client=llm_client)
             
             # Generate animation with progress indicator
             with Progress(
@@ -59,16 +59,16 @@ def animate(
                 
                 try:
                     if skip_subject_matter:
-                        # Legacy mode: Direct prompt to AnimationGenerator
+                        # Legacy mode: Direct prompt to ManimCodeGenerator
                         task1 = progress.add_task("Generating Manim script with LLM...", total=None)
-                        input_data = {"asset_prompt": prompt, "style": style, "quality": quality}
+                        input_data = {"user_prompt": prompt, "style": style, "enhance": False}
                         result = await animation_generator.generate(input_data)
                         progress.update(task1, description="✓ Script generated and rendered")
                     else:
                         # Enhanced mode: Use SubjectMatterAgent
                         task1 = progress.add_task("Analyzing subject matter and learning objectives...", total=None)
                         
-                        subject_matter_agent = SubjectMatterAgent(output_dir=output_dir, llm_client=llm_client)
+                        subject_matter_agent = SubjectMatterAgent(output_dir=output_dir, llm_client=llm_client, verbose=verbose)
                         
                         # Generate expanded prompt with timeout
                         try:
@@ -79,9 +79,9 @@ def animate(
                             
                             # Pass expanded prompt to animation generator
                             input_data = {
-                                "expanded_prompt": expanded_prompt.model_dump(),
+                                "user_prompt": prompt,
                                 "style": style,
-                                "quality": quality
+                                "enhance": True
                             }
                             result = await animation_generator.generate(input_data)
                             progress.update(task2, description="✓ Enhanced script generated and rendered")
@@ -93,7 +93,7 @@ def animate(
                             
                             # Fallback to direct prompt
                             task_fallback = progress.add_task("Generating Manim script (fallback mode)...", total=None)
-                            input_data = {"asset_prompt": prompt, "style": style, "quality": quality}
+                            input_data = {"user_prompt": prompt, "style": style, "enhance": False}
                             result = await animation_generator.generate(input_data)
                             progress.update(task_fallback, description="✓ Fallback script generated and rendered")
                     

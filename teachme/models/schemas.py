@@ -1,18 +1,17 @@
 """Pydantic models and schemas for teachme."""
 
 from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class AnimationInput(BaseModel):
-    """Input schema for AnimationGenerator."""
+    """Input schema for ManimCodeGenerator."""
     asset_prompt: str
     style: str = "light"
-    quality: str = "low"
 
 
 class AnimationOutput(BaseModel):
-    """Output schema for AnimationGenerator."""
+    """Output schema for ManimCodeGenerator."""
     video_path: str
     alt_text: str
     scene_name: str
@@ -27,6 +26,8 @@ class ManimScriptResponse(BaseModel):
     code: str
     estimated_duration: float
     fix_description: Optional[str] = None  # Optional field for error correction
+    review_notes: Optional[str] = None  # Optional field for code review
+    confidence_score: Optional[float] = None  # Optional field for code review confidence
 
 
 # SubjectMatterAgent schemas
@@ -61,18 +62,13 @@ class ExpandedPrompt(BaseModel):
     quality_checklist: List[str]
 
 
-# Enhanced AnimationInput to support both direct prompts and ExpandedPrompt
-class EnhancedAnimationInput(BaseModel):
-    """Enhanced input schema that supports both direct prompts and expanded prompts."""
-    # Either asset_prompt OR expanded_prompt should be provided
-    asset_prompt: Optional[str] = None
-    expanded_prompt: Optional[ExpandedPrompt] = None
+# Simplified unified animation input
+class AnimationRequest(BaseModel):
+    """Unified input schema for animation generation with optional enhancement."""
+    user_prompt: str
+    enhance: bool = True  # Whether to use subject matter enhancement
     style: str = "light"
-    quality: str = "low"
     
-    def model_post_init(self, __context):
-        """Validate that exactly one of asset_prompt or expanded_prompt is provided."""
-        if not self.asset_prompt and not self.expanded_prompt:
-            raise ValueError("Either asset_prompt or expanded_prompt must be provided")
-        if self.asset_prompt and self.expanded_prompt:
-            raise ValueError("Only one of asset_prompt or expanded_prompt should be provided")
+    def should_enhance(self) -> bool:
+        """Check if the request should use subject matter enhancement."""
+        return self.enhance

@@ -6,51 +6,17 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from ..config import RenderConfig, ValidationConfig
+from ..exceptions import AnimationRenderError
+
 
 class ManimRunner:
     """Safely execute Manim scripts with resource limits."""
     
-    def __init__(self, timeout: int = 180):
+    def __init__(self, timeout: int = None):
         """Initialize the Manim runner."""
-        self.timeout = timeout
+        self.timeout = timeout or RenderConfig.RENDER_TIMEOUT
     
-    # TODO(cleanup): We can remove this function for now - trust the LLM to generate safe code. Ideally
-    # we'd run this in a sandbox environment.
-    def validate_code(self, code: str) -> Tuple[bool, Optional[str]]:
-        """Validate Python code for safety."""
-        try:
-            # Parse the code to check for syntax errors
-            tree = ast.parse(code)
-            
-            # Check for potentially dangerous operations
-            dangerous_nodes = []
-            
-            for node in ast.walk(tree):
-                # Check for dangerous imports
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        if alias.name in ['os', 'subprocess', 'sys', 'shutil']:
-                            dangerous_nodes.append(f"Import of '{alias.name}' module")
-                
-                elif isinstance(node, ast.ImportFrom):
-                    if node.module in ['os', 'subprocess', 'sys', 'shutil']:
-                        dangerous_nodes.append(f"Import from '{node.module}' module")
-                
-                # Check for file operations
-                elif isinstance(node, ast.Call):
-                    if isinstance(node.func, ast.Name):
-                        if node.func.id in ['open', 'exec', 'eval', '__import__']:
-                            dangerous_nodes.append(f"Call to '{node.func.id}' function")
-            
-            if dangerous_nodes:
-                return False, f"Potentially dangerous operations detected: {', '.join(dangerous_nodes)}"
-            
-            return True, None
-            
-        except SyntaxError as e:
-            return False, f"Syntax error: {e}"
-        except Exception as e:
-            return False, f"Code validation error: {e}"
     
     def extract_scene_name(self, code: str) -> Optional[str]:
         """Extract the main Scene class name from the code."""
@@ -61,9 +27,9 @@ class ManimRunner:
                 if isinstance(node, ast.ClassDef):
                     # Check if class inherits from Scene or a Manim scene class
                     for base in node.bases:
-                        if isinstance(base, ast.Name) and base.id in ['Scene', 'MovingCameraScene', 'ThreeDScene']:
+                        if isinstance(base, ast.Name) and base.id in ValidationConfig.VALID_SCENE_CLASSES:
                             return node.name
-                        elif isinstance(base, ast.Attribute) and base.attr in ['Scene', 'MovingCameraScene', 'ThreeDScene']:
+                        elif isinstance(base, ast.Attribute) and base.attr in ValidationConfig.VALID_SCENE_CLASSES:
                             return node.name
             
             return None
@@ -78,12 +44,7 @@ class ManimRunner:
         quality: str = "low",
         output_dir: Path = None
     ) -> Tuple[bool, Optional[Path], Optional[str]]:
-        """Render a Manim animation safely."""
-        
-        # Validate the code first
-        is_valid, error_msg = self.validate_code(code)
-        if not is_valid:
-            return False, None, error_msg
+        """Render a Manim animation."""
         
         # Create temporary directory for rendering
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -94,7 +55,7 @@ class ManimRunner:
             script_path.write_text(code)
             
             # Determine quality flags
-            quality_flags = self._get_quality_flags(quality)
+            quality_flags = RenderConfig.QUALITY_FLAGS.get(quality, ["-ql"])
             
             # Construct manim command
             cmd = [
@@ -116,7 +77,8 @@ class ManimRunner:
                 )
                 
                 if result.returncode != 0:
-                    return False, None, f"Manim error: {result.stderr}"
+                    error_msg = f"Manim rendering failed: {result.stderr}"
+                    return False, None, error_msg
                 
                 # Find the generated video file
                 media_dir = temp_path / "media"
@@ -138,18 +100,11 @@ class ManimRunner:
                     return True, video_file, None
                 
             except subprocess.TimeoutExpired:
-                return False, None, f"Manim rendering timed out after {self.timeout} seconds"
+                error_msg = f"Manim rendering timed out after {self.timeout} seconds"
+                return False, None, error_msg
             except Exception as e:
-                return False, None, f"Manim execution error: {e}"
-    
-    def _get_quality_flags(self, quality: str) -> List[str]:
-        """Get manim quality flags based on quality setting."""
-        quality_map = {
-            "low": ["-ql"],      # Low quality, fast render
-            "medium": ["-qm"],   # Medium quality
-            "high": ["-qh"]      # High quality
-        }
-        return quality_map.get(quality, ["-ql"])
+                error_msg = f"Manim execution error: {e}"
+                return False, None, error_msg
     
     def check_manim_installation(self) -> Tuple[bool, Optional[str]]:
         """Check if Manim is properly installed."""

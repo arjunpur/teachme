@@ -1,4 +1,4 @@
-"""Integration tests for SubjectMatterAgent with AnimationGenerator."""
+"""Integration tests for SubjectMatterAgent with ManimCodeGenerator."""
 
 import pytest
 import asyncio
@@ -6,13 +6,13 @@ from unittest.mock import Mock, AsyncMock, patch
 from pathlib import Path
 
 from teachme.agents.subject_matter import SubjectMatterAgent
-from teachme.agents.animation import AnimationGenerator
+from teachme.agents.animation import ManimCodeGenerator
 from teachme.models.schemas import ExpandedPrompt, AnimationStep, TextOverlay
 from teachme.utils.llm_client import LLMClient
 
 
 class TestSubjectMatterIntegration:
-    """Integration tests for SubjectMatterAgent with AnimationGenerator."""
+    """Integration tests for SubjectMatterAgent with ManimCodeGenerator."""
     
     @pytest.fixture
     def mock_llm_client(self):
@@ -58,14 +58,14 @@ class TestSubjectMatterIntegration:
     
     @pytest.mark.asyncio
     async def test_subject_matter_to_animation_pipeline(self, tmp_path, mock_llm_client, sample_expanded_prompt):
-        """Test the complete pipeline from SubjectMatterAgent to AnimationGenerator."""
+        """Test the complete pipeline from SubjectMatterAgent to ManimCodeGenerator."""
         
         # Mock SubjectMatterAgent
         subject_matter_agent = SubjectMatterAgent(output_dir=tmp_path, llm_client=mock_llm_client)
         subject_matter_agent.process_with_timeout = AsyncMock(return_value=sample_expanded_prompt)
         
-        # Mock AnimationGenerator 
-        animation_generator = AnimationGenerator(output_dir=tmp_path, llm_client=mock_llm_client)
+        # Mock ManimCodeGenerator 
+        animation_generator = ManimCodeGenerator(output_dir=tmp_path, llm_client=mock_llm_client)
         
         # Mock the animation generation process
         mock_script_response = Mock()
@@ -87,7 +87,7 @@ class TestSubjectMatterIntegration:
         assert isinstance(expanded_prompt, ExpandedPrompt)
         assert expanded_prompt.learning_objective == "Understand how derivatives represent rates of change"
         
-        # 2. AnimationGenerator uses ExpandedPrompt
+        # 2. ManimCodeGenerator uses ExpandedPrompt
         input_data = {
             "expanded_prompt": expanded_prompt.model_dump(),
             "style": "light",
@@ -147,8 +147,8 @@ class TestSubjectMatterIntegration:
     
     @pytest.mark.asyncio
     async def test_animation_generator_fallback_compatibility(self, tmp_path, mock_llm_client):
-        """Test that AnimationGenerator still works with legacy AnimationInput."""
-        animation_generator = AnimationGenerator(output_dir=tmp_path, llm_client=mock_llm_client)
+        """Test that ManimCodeGenerator still works with legacy AnimationInput."""
+        animation_generator = ManimCodeGenerator(output_dir=tmp_path, llm_client=mock_llm_client)
         
         # Mock the legacy generation process
         mock_script_response = Mock()

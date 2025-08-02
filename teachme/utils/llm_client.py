@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 from rich.console import Console
+from ..exceptions import LLMGenerationError, ConfigurationError
 
 # Load environment variables from .env file
 load_dotenv()
@@ -22,7 +23,11 @@ class LLMClient:
         """Initialize the LLM client."""
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
-            raise ValueError("OpenAI API key is required. Set OPENAI_API_KEY environment variable.")
+            raise ConfigurationError(
+                "OpenAI API key is required",
+                config_key="OPENAI_API_KEY",
+                expected_type="string"
+            )
         
         self.model = model or self._determine_best_model()
         self.client = AsyncOpenAI(api_key=self.api_key)
@@ -30,17 +35,16 @@ class LLMClient:
         
         # Model-specific configuration
         self.is_o3_model = self.model.startswith("o3")
-        self.is_o1_model = self.model.startswith("o1")
     
     def _determine_best_model(self) -> str:
-        """Determine the best available model from environment or fallback to gpt-4o."""
+        """Determine the best available model from environment or fallback to o3"""
         # Check environment variable for preferred model
         preferred_model = os.getenv("TEACHME_MODEL")
         if preferred_model:
             return preferred_model
         
-        # Default to gpt-4o (most reliable for JSON responses)
-        return "gpt-4o"
+        # Default to o3 (best available model)
+        return "o3"
     
     def _build_request_params(
         self, 
@@ -61,8 +65,8 @@ class LLMClient:
             "max_completion_tokens": max_completion_tokens
         }
         
-        # Add temperature only for non-o3/o1 models
-        if not (self.is_o3_model or self.is_o1_model):
+        # Add temperature only for non-o3 models
+        if not self.is_o3_model:
             params["temperature"] = temperature
         
         # Add reasoning_effort for o3 models
@@ -102,9 +106,15 @@ class LLMClient:
             console.print(f"[red]❌ Empty response! Finish reason:[/red] {finish_reason}")
         
         if finish_reason == 'length':
-            raise ValueError(f"Response was truncated due to token limit ({max_completion_tokens} tokens). Try increasing max_completion_tokens or simplifying the prompt.")
+            raise LLMGenerationError(
+                f"Response was truncated due to token limit ({max_completion_tokens} tokens)",
+                model=self.model
+            )
         else:
-            raise ValueError(f"Empty response from LLM. Finish reason: {finish_reason}")
+            raise LLMGenerationError(
+                f"Empty response from LLM. Finish reason: {finish_reason}",
+                model=self.model
+            )
     
     async def generate_json_response(
         self,
@@ -147,11 +157,18 @@ class LLMClient:
                 console.print(f"[red]❌ JSON Parse Error:[/red] {e}")
                 console.print(f"[dim]📄 Content that failed to parse:[/dim]")
                 console.print(f"[dim]{content_preview}[/dim]")
-            raise ValueError(f"Failed to parse JSON response: {e}")
+            raise LLMGenerationError(
+                f"Failed to parse JSON response: {e}",
+                model=self.model,
+                response_content=content
+            ) from e
         except Exception as e:
             if self.verbose:
                 console.print(f"[red]❌ API Error:[/red] {type(e).__name__}: {e}")
-            raise RuntimeError(f"LLM API error: {e}")
+            raise LLMGenerationError(
+                f"LLM API error: {e}",
+                model=self.model
+            ) from e
     
     async def generate_text_response(
         self,
@@ -187,4 +204,7 @@ class LLMClient:
         except Exception as e:
             if self.verbose:
                 console.print(f"[red]❌ API Error:[/red] {type(e).__name__}: {e}")
-            raise RuntimeError(f"LLM API error: {e}")
+            raise LLMGenerationError(
+                f"LLM API error: {e}",
+                model=self.model
+            ) from e

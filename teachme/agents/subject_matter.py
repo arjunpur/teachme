@@ -13,6 +13,8 @@ from ..models.schemas import (
     TextOverlay
 )
 from ..utils.llm_client import LLMClient
+from ..config import LLMConfig
+from ..exceptions import SubjectMatterAnalysisError
 from ..prompts.subject_matter import (
     CONTENT_ANALYSIS_SYSTEM_PROMPT,
     VISUAL_PLANNING_SYSTEM_PROMPT, 
@@ -27,14 +29,15 @@ console = Console()
 class SubjectMatterAgent(BaseAgent):
     """Agent for transforming user prompts into detailed animation instructions."""
     
-    def __init__(self, output_dir: Path = None, llm_client: LLMClient = None):
+    def __init__(self, output_dir: Path = None, llm_client: LLMClient = None, verbose: bool = False):
         """Initialize the SubjectMatterAgent."""
         super().__init__(output_dir)
         self.llm_client = llm_client or LLMClient()
+        self.verbose = verbose
     
     def _is_verbose(self) -> bool:
         """Check if verbose logging is enabled."""
-        return hasattr(self.llm_client, 'verbose') and self.llm_client.verbose
+        return self.verbose
     
     async def generate(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Generate an expanded prompt from user input through 3-stage LLM processing."""
@@ -81,7 +84,10 @@ class SubjectMatterAgent(BaseAgent):
             return expanded_prompt.model_dump()
             
         except Exception as e:
-            raise RuntimeError(f"Subject matter analysis failed: {e}")
+            raise SubjectMatterAnalysisError(
+                f"Subject matter analysis failed: {e}",
+                user_prompt=subject_matter_input.user_prompt
+            ) from e
     
     async def _analyze_content(self, user_prompt: str) -> Dict[str, Any]:
         """Stage 1: Analyze content to identify core concepts and learning objectives."""
@@ -101,15 +107,19 @@ class SubjectMatterAgent(BaseAgent):
                 CONTENT_ANALYSIS_SYSTEM_PROMPT,
                 create_content_analysis_prompt(user_prompt),
                 ContentAnalysisResponse,
-                temperature=0.3,
-                reasoning_effort="medium",
-                max_completion_tokens=2000
+                temperature=LLMConfig.CONTENT_ANALYSIS_TEMPERATURE,
+                reasoning_effort=LLMConfig.DEFAULT_REASONING_EFFORT,
+                max_completion_tokens=LLMConfig.DEFAULT_MAX_TOKENS
             )
             
             return response.model_dump()
             
         except Exception as e:
-            raise RuntimeError(f"Content analysis failed: {e}")
+            raise SubjectMatterAnalysisError(
+                f"Content analysis failed: {e}",
+                stage="content_analysis",
+                user_prompt=user_prompt
+            ) from e
     
     async def _plan_visuals(self, content_analysis: Dict[str, Any]) -> Dict[str, Any]:
         """Stage 2: Design visual metaphors and visualization strategy."""
@@ -129,15 +139,18 @@ class SubjectMatterAgent(BaseAgent):
                 VISUAL_PLANNING_SYSTEM_PROMPT,
                 create_visual_planning_prompt(content_analysis),
                 VisualPlanningResponse,
-                temperature=0.4,
-                reasoning_effort="medium",
-                max_completion_tokens=2000
+                temperature=LLMConfig.VISUAL_PLANNING_TEMPERATURE,
+                reasoning_effort=LLMConfig.DEFAULT_REASONING_EFFORT,
+                max_completion_tokens=LLMConfig.DEFAULT_MAX_TOKENS
             )
             
             return response.model_dump()
             
         except Exception as e:
-            raise RuntimeError(f"Visual planning failed: {e}")
+            raise SubjectMatterAnalysisError(
+                f"Visual planning failed: {e}",
+                stage="visual_planning"
+            ) from e
     
     async def _generate_sequence(self, content_analysis: Dict[str, Any], visual_planning: Dict[str, Any]) -> Dict[str, Any]:
         """Stage 3: Create step-by-step animation breakdown with quality requirements."""
@@ -167,9 +180,9 @@ class SubjectMatterAgent(BaseAgent):
                 SEQUENCE_GENERATION_SYSTEM_PROMPT,
                 create_sequence_generation_prompt(content_analysis, visual_planning),
                 SequenceGenerationResponse,
-                temperature=0.3,
-                reasoning_effort="high",
-                max_completion_tokens=4000
+                temperature=LLMConfig.CONTENT_ANALYSIS_TEMPERATURE,
+                reasoning_effort=LLMConfig.HIGH_REASONING_EFFORT,
+                max_completion_tokens=LLMConfig.DEFAULT_MAX_TOKENS
             )
             
             # Convert to dict format expected by ExpandedPrompt
@@ -186,7 +199,10 @@ class SubjectMatterAgent(BaseAgent):
             return sequence_dict
             
         except Exception as e:
-            raise RuntimeError(f"Sequence generation failed: {e}")
+            raise SubjectMatterAnalysisError(
+                f"Sequence generation failed: {e}",
+                stage="sequence_generation"
+            ) from e
     
     async def process_with_timeout(self, user_prompt: str, timeout_seconds: int = 90) -> ExpandedPrompt:
         """Process user prompt with timeout, returning ExpandedPrompt object."""
@@ -200,6 +216,12 @@ class SubjectMatterAgent(BaseAgent):
             return ExpandedPrompt(**result)
             
         except asyncio.TimeoutError:
-            raise RuntimeError(f"Subject matter processing timed out after {timeout_seconds} seconds")
+            raise SubjectMatterAnalysisError(
+                f"Subject matter processing timed out after {timeout_seconds} seconds",
+                user_prompt=user_prompt
+            )
         except Exception as e:
-            raise RuntimeError(f"Subject matter processing failed: {e}")
+            raise SubjectMatterAnalysisError(
+                f"Subject matter processing failed: {e}",
+                user_prompt=user_prompt
+            ) from e
