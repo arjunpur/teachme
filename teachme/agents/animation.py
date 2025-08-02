@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional
 
 from rich.console import Console
 from ..agents.base import BaseAgent
-from ..models.schemas import AnimationInput, AnimationOutput, ManimScriptResponse
+from ..models.schemas import AnimationInput, AnimationOutput, ManimScriptResponse, EnhancedAnimationInput, ExpandedPrompt
 from ..utils.llm_client import LLMClient
 from ..utils.manim_runner import ManimRunner
 from ..prompts.animation import ANIMATION_SYSTEM_PROMPT, create_animation_user_prompt, ERROR_CORRECTION_SYSTEM_PROMPT, create_error_correction_prompt
@@ -41,8 +41,13 @@ class AnimationGenerator(BaseAgent):
     
     async def generate(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Generate an animation from the input data."""
-        # Validate input
-        animation_input = AnimationInput(**input_data)
+        # Validate input - try EnhancedAnimationInput first, fallback to legacy AnimationInput
+        try:
+            enhanced_input = EnhancedAnimationInput(**input_data)
+            animation_input = enhanced_input
+        except:
+            # Fallback to legacy AnimationInput for backward compatibility
+            animation_input = AnimationInput(**input_data)
         
         try:
             # Check Manim installation
@@ -51,11 +56,21 @@ class AnimationGenerator(BaseAgent):
                 raise RuntimeError(f"Manim installation check failed: {version_info}")
             
             # Generate and render animation with retry logic
-            script_response, video_path = await self._generate_and_render_with_retry(
-                animation_input.asset_prompt,
-                animation_input.style,
-                animation_input.quality
-            )
+            if hasattr(animation_input, 'expanded_prompt') and animation_input.expanded_prompt:
+                # Use ExpandedPrompt flow
+                script_response, video_path = await self._generate_and_render_with_expanded_prompt(
+                    animation_input.expanded_prompt,
+                    animation_input.style,
+                    animation_input.quality
+                )
+            else:
+                # Use direct prompt flow (legacy)
+                prompt = animation_input.asset_prompt
+                script_response, video_path = await self._generate_and_render_with_retry(
+                    prompt,
+                    animation_input.style,
+                    animation_input.quality
+                )
             
             # Create output
             output = AnimationOutput(
@@ -107,14 +122,57 @@ class AnimationGenerator(BaseAgent):
         # Should never reach here due to the logic above
         raise RuntimeError("Unexpected error in retry loop")
     
+    async def _generate_and_render_with_expanded_prompt(self, expanded_prompt: ExpandedPrompt, style: str, quality: str) -> tuple[ManimScriptResponse, Path]:
+        """Generate Manim script from ExpandedPrompt and render with retry logic."""
+        max_attempts = 3
+        script_response = await self._generate_manim_script_from_expanded_prompt(expanded_prompt, style)
+        
+        for attempt in range(1, max_attempts + 1):
+            success, video_path, error_msg = await self.manim_runner.render_animation(
+                script_response.code, script_response.scene_name, quality, self.animations_dir
+            )
+            
+            if success:
+                self.last_saved_script_path = await self._save_successful_script(script_response, expanded_prompt.learning_objective, attempt)
+                return script_response, video_path
+            
+            # If this was the last attempt, give up
+            if attempt == max_attempts:
+                raise RuntimeError(f"Animation rendering failed after {max_attempts} attempts. Final error: {error_msg}")
+            
+            # Try to fix the script using LLM
+            if self._is_verbose():
+                console.print(f"[yellow]🔧 Attempt {attempt} failed. Trying to fix error with LLM...[/yellow]")
+                console.print(f"[red]Error:[/red] {error_msg}")
+            
+            try:
+                script_response = await self._fix_manim_script(script_response.code, error_msg, attempt + 1)
+            except Exception as fix_error:
+                raise RuntimeError(f"Failed to fix script on attempt {attempt}: {fix_error}")
+        
+        # Should never reach here due to the logic above
+        raise RuntimeError("Unexpected error in retry loop")
+    
     async def _generate_manim_script(self, prompt: str, style: str) -> ManimScriptResponse:
         """Generate a Manim script using the LLM."""
         return await self._call_llm_for_script(
             ANIMATION_SYSTEM_PROMPT,
             create_animation_user_prompt(prompt, style),
             temperature=0.7,
-            max_completion_tokens=10000,
+            max_completion_tokens=20000,
             error_context="generate Manim script"
+        )
+    
+    async def _generate_manim_script_from_expanded_prompt(self, expanded_prompt: ExpandedPrompt, style: str) -> ManimScriptResponse:
+        """Generate a Manim script from an ExpandedPrompt using enhanced prompts."""
+        from ..prompts.animation import create_enhanced_animation_user_prompt
+        
+        return await self._call_llm_for_script(
+            ANIMATION_SYSTEM_PROMPT,
+            create_enhanced_animation_user_prompt(expanded_prompt, style),
+            temperature=0.7,
+            max_completion_tokens=20000,
+            error_context="generate Manim script from expanded prompt"
         )
     
     async def _fix_manim_script(self, original_code: str, error_message: str, attempt_number: int) -> ManimScriptResponse:
@@ -123,7 +181,7 @@ class AnimationGenerator(BaseAgent):
             ERROR_CORRECTION_SYSTEM_PROMPT,
             create_error_correction_prompt(original_code, error_message, attempt_number),
             temperature=0.3,
-            max_completion_tokens=4000,
+            max_completion_tokens=20000,
             error_context="fix Manim script"
         )
     

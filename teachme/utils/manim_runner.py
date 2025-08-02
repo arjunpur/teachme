@@ -14,6 +14,8 @@ class ManimRunner:
         """Initialize the Manim runner."""
         self.timeout = timeout
     
+    # TODO(cleanup): We can remove this function for now - trust the LLM to generate safe code. Ideally
+    # we'd run this in a sandbox environment.
     def validate_code(self, code: str) -> Tuple[bool, Optional[str]]:
         """Validate Python code for safety."""
         try:

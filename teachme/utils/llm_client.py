@@ -113,7 +113,7 @@ class LLMClient:
         response_model: BaseModel,
         temperature: float = 0.7,
         reasoning_effort: str = "medium",
-        max_completion_tokens: int = 2000
+        max_completion_tokens: int = 4000
     ) -> BaseModel:
         """Generate a structured JSON response from the LLM."""
         try:
@@ -159,7 +159,7 @@ class LLMClient:
         user_prompt: str,
         temperature: float = 0.7,
         reasoning_effort: str = "medium",
-        max_completion_tokens: int = 2000
+        max_completion_tokens: int = 4000
     ) -> str:
         """Generate a plain text response from the LLM."""
         try:

@@ -46,6 +46,62 @@ Requirements:
 
 Important: Respond with valid JSON only. No additional text or formatting."""
 
+
+def create_enhanced_animation_user_prompt(expanded_prompt, style: str = "light") -> str:
+    """Create an enhanced user prompt for animation generation using ExpandedPrompt."""
+    from ..models.schemas import ExpandedPrompt
+    
+    style_colors = {
+        "light": "light background with dark text and colorful elements",
+        "dark": "dark background with light text and bright colorful elements"
+    }
+    
+    style_description = style_colors.get(style, "light background with dark text and colorful elements")
+    
+    # Format animation sequence
+    sequence_text = ""
+    for step in expanded_prompt.animation_sequence:
+        sequence_text += f"\nStep {step.step_number}: {step.visual_description}\nKey insight: {step.key_insight}\n"
+    
+    # Format text overlays
+    text_overlays = ""
+    for text in expanded_prompt.explanatory_text:
+        text_overlays += f'\n"{text.text}" - {text.timing_description}'
+    
+    # Format quality requirements
+    quality_requirements = ""
+    for requirement in expanded_prompt.quality_checklist:
+        quality_requirements += f"\n- {requirement}"
+    
+    return f"""Create a Manim animation with this detailed specification:
+
+OBJECTIVE: {expanded_prompt.learning_objective}
+
+CONCEPTS: {', '.join(expanded_prompt.key_concepts)}
+
+VISUAL STRATEGY: {expanded_prompt.visual_strategy}
+
+ANIMATION SEQUENCE:{sequence_text}
+
+TEXT TO INCLUDE:{text_overlays}
+
+QUALITY REQUIREMENTS:{quality_requirements}
+
+CRITICAL: Ensure no text overlaps with visual elements. Position all labels and equations in clear, unobstructed areas. Use appropriate timing so text appears synchronized with relevant visuals.
+
+Additional Requirements:
+- Animation duration: 20-30 seconds
+- Use {style_description}
+- Include clear visual transitions
+- Add descriptive comments in the code
+- Make it intuitive for beginners
+- Use Manim Community Edition syntax (import from manim import *)
+- Follow the step-by-step sequence precisely
+- Include all specified text overlays with proper timing
+- Meet all quality requirements listed above
+
+Important: Respond with valid JSON only. No additional text or formatting."""
+
 ERROR_CORRECTION_SYSTEM_PROMPT = """You are an expert Manim animator who fixes errors in Manim code.
 You receive a broken Manim script and an error message, then provide a corrected version.
 Always return valid JSON with the fixed code.
