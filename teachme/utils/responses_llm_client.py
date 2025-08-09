@@ -1,15 +1,13 @@
 """OpenAI Responses API client wrapper for LLM interactions."""
 
 import os
-from typing import Optional, Union, List, Dict, Any, Type, Tuple
+from typing import Optional, Union, List, Dict, Any, Type
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 from rich.console import Console
-from rich.live import Live
-from rich.panel import Panel
 from ..exceptions import LLMGenerationError, ConfigurationError
 
 # Load environment variables from .env file
@@ -37,7 +35,7 @@ class ResponseResult:
 class ResponsesLLMClient:
     """Single entrypoint LLM client using OpenAI Responses API."""
     
-    def __init__(self, api_key: Optional[str] = None, model: str = None, verbose: bool = False, reasoning_effort: Optional[str] = None, stream_reasoning: Optional[bool] = None, reasoning_buffer_lines: Optional[int] = None):
+    def __init__(self, api_key: Optional[str] = None, model: str = None, verbose: bool = False, reasoning_effort: Optional[str] = None):
         """Initialize the Responses LLM client."""
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not self.api_key:
@@ -54,10 +52,7 @@ class ResponsesLLMClient:
         env_effort = os.getenv("TEACHME_REASONING_EFFORT")
         configured_effort = reasoning_effort or env_effort or "medium"
         self.default_reasoning = self._normalize_reasoning_effort(configured_effort)
-        # Streaming of model reasoning deltas (default ON). Controlled only via constructor.
-        self.stream_reasoning = True if stream_reasoning is None else bool(stream_reasoning)
-        # Buffer lines for reasoning window (default 15). Controlled only via constructor.
-        self.reasoning_buffer_lines = 15 if reasoning_buffer_lines is None else int(reasoning_buffer_lines)
+        # No streaming state; responses are retrieved after completion
 
     def _normalize_reasoning_effort(self, effort_value: Optional[str]) -> Optional[Dict[str, Any]]:
         """Return a valid reasoning dict for the API or None if disabled."""
@@ -161,92 +156,7 @@ class ResponsesLLMClient:
             }
         return None
     
-    # Note: environment variables no longer control streaming settings; use constructor args instead.
-    
-    async def _stream_text_response(
-        self,
-        params: Dict[str, Any],
-        show_reasoning: bool,
-        buffer_lines: int,
-    ) -> Tuple[str, Any]:
-        """Stream a text response while rendering reasoning in a bounded live panel.
-
-        Returns:
-            tuple(content_text, final_response)
-        """
-        # Prepare parameters (no 'stream' kw for stream() API)
-        params = dict(params)
-        params.pop("stream", None)
-
-        collected_text_parts: List[str] = []
-        reasoning_text: List[str] = []
-
-        # Helper to compute the sliding window view
-        def _sliding_text() -> str:
-            full = "".join(reasoning_text)
-            lines = full.splitlines() or [full]
-            return "\n".join(lines[-buffer_lines:])
-
-        final_response = None
-
-        try:
-            # Async streaming context; API surface may evolve, so be defensive
-            stream_ctx = await self.client.responses.stream(**params)
-            async with stream_ctx as stream:
-                live: Optional[Live] = None
-                if show_reasoning:
-                    live = Live(
-                        Panel("", title="Model reasoning", border_style="cyan"),
-                        refresh_per_second=12,
-                        console=console,
-                        transient=True,
-                    )
-                    live.start()
-
-                try:
-                    async for event in stream:
-                        # Event typing can vary; normalize access
-                        event_type = getattr(event, "type", None) or getattr(event, "event", None) or ""
-                        # Output text delta (actual answer)
-                        if str(event_type).endswith("output_text.delta"):
-                            delta = getattr(event, "delta", None) or getattr(event, "data", {}).get("delta", "")
-                            if delta:
-                                collected_text_parts.append(delta)
-                        # Reasoning delta (we render this)
-                        elif str(event_type).endswith("reasoning.delta"):
-                            delta = getattr(event, "delta", None) or getattr(event, "data", {}).get("delta", "")
-                            if delta:
-                                reasoning_text.append(delta)
-                                if live is not None:
-                                    live.update(Panel(_sliding_text(), title="Model reasoning", border_style="cyan"))
-                        # Capture completion and/or final response
-                        elif str(event_type).endswith("completed"):
-                            pass
-                        elif str(event_type).endswith("error"):
-                            # Let the outer handler raise
-                            raise RuntimeError(getattr(event, "error", "Stream error"))
-
-                finally:
-                    if live is not None:
-                        live.stop()
-
-                # Try to fetch the final response object from the stream (SDK helper)
-                try:
-                    final_response = await stream.get_final_response()
-                except Exception:
-                    final_response = None
-
-            content_text = ("".join(collected_text_parts)).strip()
-            return content_text, final_response
-
-        except Exception as stream_error:
-            # Fallback to non-streaming call to avoid breaking functionality
-            if self.verbose:
-                console.print(f"[yellow]⚠️  Streaming failed, falling back: {stream_error}[/yellow]")
-            params.pop("stream", None)
-            response = await self.client.responses.create(**params)
-            content_text = getattr(response, "output_text", "").strip()
-            return content_text, response
+    # No streaming helpers; only non-streaming generation
     
     async def generate(
         self,
@@ -293,39 +203,28 @@ class ResponsesLLMClient:
                 params["input"] = input
                 if instructions:
                     params["instructions"] = instructions
+                response = await self.client.responses.create(**params)
 
-                # If enabled, stream the response and render reasoning in a sliding window
-                if self.stream_reasoning or bool(kwargs.get("stream", False)):
-                    content_text, final_response = await self._stream_text_response(
-                        params,
-                        show_reasoning=True,
-                        buffer_lines=self.reasoning_buffer_lines,
-                    )
-                    response = final_response
-                    content = content_text
-                else:
-                    response = await self.client.responses.create(**params)
+                # Responses API returns a Response object with `output` items and convenience `output_text`
+                content = getattr(response, "output_text", "")
+                if not content:
+                    # Fallback: concatenate any message/output_text items if present
+                    try:
+                        content = "".join(
+                            [
+                                block.text
+                                for item in getattr(response, "output", [])
+                                if getattr(item, "type", "") == "message"
+                                for block in getattr(item, "content", [])
+                                if getattr(block, "type", "") == "output_text"
+                            ]
+                        )
+                    except Exception:
+                        content = ""
 
-                    # Responses API returns a Response object with `output` items and convenience `output_text`
-                    content = getattr(response, "output_text", "")
-                    if not content:
-                        # Fallback: concatenate any message/output_text items if present
-                        try:
-                            content = "".join(
-                                [
-                                    block.text
-                                    for item in getattr(response, "output", [])
-                                    if getattr(item, "type", "") == "message"
-                                    for block in getattr(item, "content", [])
-                                    if getattr(block, "type", "") == "output_text"
-                                ]
-                            )
-                        except Exception:
-                            content = ""
-
-                    if not content:
-                        raise LLMGenerationError("Empty response from LLM", model=self.model)
-                    content = content.strip()
+                if not content:
+                    raise LLMGenerationError("Empty response from LLM", model=self.model)
+                content = content.strip()
             
             self._log_response(response, content)
             
