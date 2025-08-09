@@ -16,6 +16,9 @@ CODE CORRECTNESS REQUIREMENTS:
 - Ensure proper scene structure with exactly one Scene class
 - Use appropriate timing values (positive numbers for durations)
 - Avoid deprecated Manim methods and use current syntax
+- CRITICAL: Use raw strings (r"...") for ALL strings containing backslashes, especially LaTeX expressions in MathTex() and Tex()
+- Examples: MathTex(r"\\pi r^2"), Tex(r"\\sin(x)"), MathTex(r"\\frac{1}{2}")
+- Never use regular strings with backslashes like MathTex("\\pi") - this causes SyntaxWarnings
 
 ANIMATION BEST PRACTICES:
 - Be 15-30 seconds long
@@ -59,6 +62,7 @@ Requirements:
 - Focus on one core concept
 - Make it intuitive for beginners
 - Use Manim Community Edition syntax (import from manim import *)
+- IMPORTANT: Use raw strings (r"...") for all LaTeX expressions: MathTex(r"\\pi"), Tex(r"\\sin(x)"), etc.
 
 Important: Respond with valid JSON only. No additional text or formatting."""
 
@@ -115,6 +119,37 @@ Additional Requirements:
 - Follow the step-by-step sequence precisely
 - Include all specified text overlays with proper timing
 - Meet all quality requirements listed above
+- CRITICAL: Use raw strings (r"...") for all LaTeX expressions: MathTex(r"\\pi"), Tex(r"\\sin(x)"), etc.
+
+Important: Respond with valid JSON only. No additional text or formatting."""
+
+def create_animation_prompt_from_brief(brief_text: str, style: str = "light") -> str:
+    """Create the user prompt for animation generation from a prose brief.
+
+    The brief is a structured human-readable specification produced by the SubjectMatterAgent.
+    This function wraps it with style and strict output requirements for the code generator.
+    """
+    style_colors = {
+        "light": "light background with dark text and colorful elements",
+        "dark": "dark background with light text and bright colorful elements",
+    }
+
+    style_description = style_colors.get(style, "light background with dark text and colorful elements")
+
+    return f"""Using the following structured brief, write a Manim animation:
+
+BRIEF START
+{brief_text}
+BRIEF END
+
+Constraints:
+- Duration: 20–30 seconds
+- Style: {style_description}
+- Clear visual transitions and no overlapping of text with diagrams
+- Include helpful comments in the code
+- Follow the brief's Sequence Steps and Text Overlays closely
+- Use Manim Community Edition syntax (from manim import *)
+- CRITICAL: Use raw strings (r"...") for any LaTeX strings in MathTex/Tex
 
 Important: Respond with valid JSON only. No additional text or formatting."""
 
@@ -160,6 +195,7 @@ Your code review should check for:
 - Proper positioning to avoid visual overlaps
 - Logical animation flow and object lifecycle
 - Performance considerations and optimization
+- CRITICAL: Ensure raw strings (r"...") are used for ALL LaTeX expressions and strings with backslashes
 
 Update and improve the code by:
 - Fixing any syntax or logical errors
@@ -170,6 +206,8 @@ Update and improve the code by:
 - Ensuring educational value
 - Correcting mathematical formulas
 - Improving timing and transitions
+- Converting all LaTeX expressions to use raw strings: MathTex(r"\\pi"), Tex(r"\\sin(x)")
+- Eliminating SyntaxWarnings by using proper string formatting
 
 Always respond with JSON matching this exact structure:
 ```json
@@ -194,6 +232,7 @@ Your corrections should:
 - Use proper Manim Community Edition syntax
 - Keep the same scene structure and duration
 - Preserve helpful comments
+- Use raw strings (r"...") for all LaTeX expressions and strings with backslashes
 
 Always respond with JSON matching this exact structure:
 ```json
@@ -228,5 +267,6 @@ Please analyze the error and provide a corrected version of the code. Focus on:
 2. Ensuring proper Manim Community Edition syntax
 3. Maintaining the original visual concept
 4. Keeping the animation educational and clear
+5. Using raw strings (r"...") for all LaTeX expressions to avoid SyntaxWarnings
 
 Important: Respond with valid JSON only. No additional text or formatting."""
