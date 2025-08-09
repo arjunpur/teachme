@@ -56,6 +56,7 @@ dmypy.json
 
 # Outputs
 outputs/
+test_outputs/
 media/
 *.mp4
 *.png

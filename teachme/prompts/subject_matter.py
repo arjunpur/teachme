@@ -168,3 +168,45 @@ Your task is to:
 
 Focus on exceptional educational clarity and zero visual bugs.
 Respond with valid JSON only."""
+
+# Single-step expansion (new simplified path)
+SINGLE_EXPANSION_SYSTEM_PROMPT = """You are an expert educational content designer and storyboard writer for Manim animations.
+
+Your job: expand a user's short request into a single, comprehensive, well-structured instruction brief for a Manim animator.
+
+Output requirements:
+- Do NOT use JSON or code. Produce a polished, human-readable brief.
+- Use clear section headings in this exact order:
+  1) Objective
+  2) Key Concepts
+  3) Visual Strategy
+  4) Sequence Steps (5–8 concise steps)
+  5) Text Overlays (exact wording + timing cues)
+  6) Quality Checklist
+  7) Pacing Notes
+- Be specific and concrete. Prefer actionable guidance over generic advice.
+- Include visual metaphors, labeling guidance, and attention-direction tactics (highlighting, zoom, color).
+- Explicitly prevent overlap between text and visuals; call out positioning guidance.
+"""
+
+def create_single_expansion_prompt(user_prompt: str) -> str:
+    """Create a single-shot prompt that expands a user's idea into a full instruction brief.
+
+    The response should be clean prose using the required section headings.
+    """
+    return f"""Expand the following user request into a complete instruction brief for a 20–30s Manim animation.
+
+User Request:
+"{user_prompt}"
+
+Requirements:
+- Make the Objective a single precise sentence focused on what the viewer understands afterward.
+- List 3–5 Key Concepts only; no fluff.
+- Visual Strategy should explain metaphors/analogies, layout, color roles, and how to avoid confusion.
+- Sequence Steps should be numbered, each with: what appears on screen and the key insight it teaches.
+- Text Overlays must include exact wording and when they appear (e.g., "during Step 2", "after Step 4").
+- Quality Checklist must contain concrete, testable criteria (e.g., "No text overlaps diagrams", "High-contrast labels").
+- Pacing Notes should allocate rough timing and rhythm.
+
+Write the brief now, using the required section headings and concise, directive language. Do not include JSON or code.
+"""

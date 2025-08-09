@@ -14,7 +14,7 @@ load_dotenv()
 
 from .agents.animation import ManimCodeGenerator
 from .agents.subject_matter import SubjectMatterAgent
-from .utils.llm_client import LLMClient
+from .utils.responses_llm_client import ResponsesLLMClient
 
 app = typer.Typer(help="TeachMe - Convert natural language prompts into educational content with animations")
 console = Console()
@@ -38,7 +38,7 @@ def animate(
             if verbose:
                 console.print("[blue]Initializing animation system...[/blue]")
             
-            llm_client = LLMClient(api_key=api_key, verbose=verbose)
+            llm_client = ResponsesLLMClient(api_key=api_key, verbose=verbose)
             animation_generator = ManimCodeGenerator(output_dir=output_dir, llm_client=llm_client)
             
             # Generate animation with progress indicator
