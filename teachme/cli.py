@@ -13,7 +13,6 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 load_dotenv()
 
 from .agents.animation import ManimCodeGenerator
-from .agents.subject_matter import SubjectMatterAgent
 from .utils.responses_llm_client import ResponsesLLMClient
 
 app = typer.Typer(help="TeachMe - Convert natural language prompts into educational content with animations")
@@ -39,7 +38,9 @@ def animate(
                 console.print("[blue]Initializing animation system...[/blue]")
             
             llm_client = ResponsesLLMClient(api_key=api_key, verbose=verbose)
-            animation_generator = ManimCodeGenerator(output_dir=output_dir, llm_client=llm_client)
+            if verbose:
+                console.print("[dim]Streaming model reasoning...[/dim]")
+            animation_generator = ManimCodeGenerator(output_dir=output_dir, llm_client=llm_client, verbose=verbose)
             
             # Generate animation with progress indicator
             with Progress(
@@ -52,50 +53,17 @@ def animate(
                 if verbose:
                     console.print(f"[blue]Prompt:[/blue] {prompt}")
                     console.print(f"[blue]Style:[/blue] {style}, [blue]Quality:[/blue] {quality}")
-                    if not skip_subject_matter:
-                        console.print("[blue]Mode:[/blue] Enhanced (using SubjectMatterAgent)")
-                    else:
-                        console.print("[blue]Mode:[/blue] Legacy (direct prompt)")
+                    console.print("[blue]Mode:[/blue] Enhanced" if not skip_subject_matter else "[blue]Mode:[/blue] Direct")
                 
                 try:
-                    if skip_subject_matter:
-                        # Legacy mode: Direct prompt to ManimCodeGenerator
-                        task1 = progress.add_task("Generating Manim script with LLM...", total=None)
-                        input_data = {"user_prompt": prompt, "style": style, "enhance": False}
-                        result = await animation_generator.generate(input_data)
-                        progress.update(task1, description="✓ Script generated and rendered")
-                    else:
-                        # Enhanced mode: Use SubjectMatterAgent
-                        task1 = progress.add_task("Analyzing subject matter and learning objectives...", total=None)
-                        
-                        subject_matter_agent = SubjectMatterAgent(output_dir=output_dir, llm_client=llm_client, verbose=verbose)
-                        
-                        # Generate expanded prompt with timeout
-                        try:
-                            expanded_prompt = await subject_matter_agent.process_with_timeout(prompt, timeout_seconds=90)
-                            progress.update(task1, description="✓ Subject matter analysis complete")
-                            
-                            task2 = progress.add_task("Generating enhanced Manim script...", total=None)
-                            
-                            # Pass expanded prompt to animation generator
-                            input_data = {
-                                "user_prompt": prompt,
-                                "style": style,
-                                "enhance": True
-                            }
-                            result = await animation_generator.generate(input_data)
-                            progress.update(task2, description="✓ Enhanced script generated and rendered")
-                            
-                        except Exception as subject_matter_error:
-                            progress.update(task1, description=f"✗ Subject matter analysis failed: {str(subject_matter_error)}")
-                            console.print(f"[yellow]⚠️  Subject matter analysis failed, falling back to direct prompt...[/yellow]")
-                            console.print(f"[yellow]Error: {str(subject_matter_error)}[/yellow]")
-                            
-                            # Fallback to direct prompt
-                            task_fallback = progress.add_task("Generating Manim script (fallback mode)...", total=None)
-                            input_data = {"user_prompt": prompt, "style": style, "enhance": False}
-                            result = await animation_generator.generate(input_data)
-                            progress.update(task_fallback, description="✓ Fallback script generated and rendered")
+                    # Single unified path: delegate subject matter handling to animation agent
+                    task = progress.add_task(
+                        "Generating enhanced Manim script..." if not skip_subject_matter else "Generating Manim script...",
+                        total=None
+                    )
+                    input_data = {"user_prompt": prompt, "style": style, "use_subject_matter": (not skip_subject_matter)}
+                    result = await animation_generator.generate_animation(input_data)
+                    progress.update(task, description="✓ Script generated and rendered")
                     
                 except Exception as e:
                     progress.update(progress.tasks[0].id if progress.tasks else 0, description=f"✗ Failed: {str(e)}")

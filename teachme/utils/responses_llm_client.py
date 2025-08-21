@@ -1,7 +1,7 @@
 """OpenAI Responses API client wrapper for LLM interactions."""
 
 import os
-from typing import Optional, Union, List, Dict, Any, Type
+from typing import Optional, Union, List, Dict, Any, Type, Callable
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
@@ -45,7 +45,13 @@ class ResponsesLLMClient:
                 expected_type="string"
             )
         
-        self.model = model or os.getenv("TEACHME_MODEL", "gpt-4o")
+        # Respect explicit arg, then env, then config default
+        try:
+            from ..config import LLMConfig
+            config_default_model = getattr(LLMConfig, "DEFAULT_MODEL", None)
+        except Exception:
+            config_default_model = None
+        self.model = model or os.getenv("TEACHME_MODEL", config_default_model or "gpt-4o")
         self.client = AsyncOpenAI(api_key=self.api_key)
         self.verbose = verbose
         # Default reasoning effort; caller can override per-call via kwargs['reasoning']
@@ -156,8 +162,6 @@ class ResponsesLLMClient:
             }
         return None
     
-    # No streaming helpers; only non-streaming generation
-    
     async def generate(
         self,
         input: Union[str, List[Dict[str, Any]]],
@@ -165,6 +169,8 @@ class ResponsesLLMClient:
         response_format: Optional[Type[BaseModel]] = None,
         previous_response_id: Optional[str] = None,
         return_response_id: bool = False,
+        stream_reasoning: bool = False,
+        on_reasoning_token: Optional[Callable[[str], None]] = None,
         **kwargs
     ) -> Union[str, BaseModel, ResponseResult]:
         """
@@ -187,16 +193,45 @@ class ResponsesLLMClient:
             self._log_request(input_type, instructions, response_format, previous_response_id)
             
             if response_format:
-                # Structured output using responses.parse()
+                # Structured output using responses.parse(); optionally stream reasoning tokens
                 messages = self._build_messages(input, instructions)
                 params = self._build_params(messages, instructions, previous_response_id, **kwargs)
                 params.update({
                     "input": messages,
                     "text_format": response_format
                 })
-                
-                response = await self.client.responses.parse(**params)
-                content = response.output_parsed
+
+                # Attempt streaming to surface reasoning deltas; fallback to non-streaming
+                if stream_reasoning and on_reasoning_token is not None:
+                    try:
+                        async with self.client.responses.stream(**params) as stream:
+                            async for event in stream:
+                                try:
+                                    event_type = getattr(event, "type", "") or ""
+                                    # New SDK surfaces reasoning events via specific types
+                                    if event_type in (
+                                        "response.reasoning.delta",
+                                        "response.reasoning.summary.delta",
+                                    ):
+                                        delta = getattr(event, "delta", None)
+                                        if isinstance(delta, str) and delta:
+                                            on_reasoning_token(delta)
+                                    elif event_type == "response.output_text.delta":
+                                        # As a fallback, also surface normal text tokens if desired
+                                        delta = getattr(event, "delta", None)
+                                        if isinstance(delta, str) and delta:
+                                            on_reasoning_token(delta)
+                                except Exception:
+                                    # Do not break stream on callback/inspection errors
+                                    pass
+                            response = await stream.get_final_response()
+                            content = response.output_parsed
+                    except Exception:
+                        response = await self.client.responses.parse(**params)
+                        content = response.output_parsed
+                else:
+                    response = await self.client.responses.parse(**params)
+                    content = response.output_parsed
             else:
                 # Text output using Responses API create(); extract via output_text
                 params = self._build_params(input, instructions, previous_response_id, **kwargs)
@@ -242,44 +277,46 @@ class ResponsesLLMClient:
             if self.verbose:
                 console.print(f"[red]❌ API Error:[/red] {type(e).__name__}: {e}")
             raise LLMGenerationError(f"Responses API error: {e}", model=self.model) from e
+
+    # Public convenience wrappers
+    async def generate_structured(
+        self,
+        input: Union[str, List[Dict[str, Any]]],
+        instructions: Optional[str],
+        response_format: Type[BaseModel],
+        previous_response_id: Optional[str] = None,
+        return_response_id: bool = False,
+        **kwargs,
+    ) -> Union[BaseModel, ResponseResult]:
+        """Generate a structured response parsed into the provided Pydantic model.
+
+        This is a clearer entrypoint alias for generate(..., response_format=...).
+        """
+        return await self.generate(
+            input=input,
+            instructions=instructions,
+            response_format=response_format,
+            previous_response_id=previous_response_id,
+            return_response_id=return_response_id,
+            **kwargs,
+        )
+
+    async def generate_text(
+        self,
+        input: Union[str, List[Dict[str, Any]]],
+        instructions: Optional[str] = None,
+        previous_response_id: Optional[str] = None,
+        **kwargs,
+    ) -> str:
+        """Generate plain text. Wrapper for generate() without response_format."""
+        result = await self.generate(
+            input=input,
+            instructions=instructions,
+            previous_response_id=previous_response_id,
+            **kwargs,
+        )
+        # Base generate returns str when no response_format
+        return result  # type: ignore[return-value]
     
     # Backward compatibility methods
-    async def generate_text_response(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        temperature: float = 0.7,
-        reasoning_effort: str = "medium",
-        max_completion_tokens: int = 4000,
-        previous_response_id: Optional[str] = None
-    ) -> str:
-        """Generate a plain text response (backward compatibility)."""
-        return await self.generate(
-            input=user_prompt,
-            instructions=system_prompt,
-            previous_response_id=previous_response_id,
-            temperature=temperature,
-            reasoning=self._normalize_reasoning_effort(reasoning_effort),
-            max_completion_tokens=max_completion_tokens
-        )
-    
-    async def generate_json_response(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-        response_model: Type[BaseModel],
-        temperature: float = 0.7,
-        reasoning_effort: str = "medium",
-        max_completion_tokens: int = 4000,
-        previous_response_id: Optional[str] = None
-    ) -> BaseModel:
-        """Generate a structured JSON response (backward compatibility)."""
-        return await self.generate(
-            input=user_prompt,
-            instructions=system_prompt,
-            response_format=response_model,
-            previous_response_id=previous_response_id,
-            temperature=temperature,
-            reasoning=self._normalize_reasoning_effort(reasoning_effort),
-            max_completion_tokens=max_completion_tokens
-        )
+    # (Removed legacy generate_text_response/generate_json_response)

@@ -37,6 +37,42 @@ class ManimRunner:
         except Exception:
             return None
     
+    def validate_code(self, code: str) -> Tuple[bool, Optional[str]]:
+        """Perform simple static checks for dangerous imports/functions.
+
+        Returns (is_valid, error_message).
+        """
+        try:
+            tree = ast.parse(code)
+        except Exception as e:
+            return False, f"Syntax error: {e}"
+
+        # Check imports
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.split(".")[0] in ValidationConfig.DANGEROUS_IMPORTS:
+                        return False, f"Dangerous import detected: {alias.name}"
+            elif isinstance(node, ast.ImportFrom):
+                if node.module and node.module.split(".")[0] in ValidationConfig.DANGEROUS_IMPORTS:
+                    return False, f"Dangerous import detected: {node.module}"
+            elif isinstance(node, ast.Call):
+                # Detect calls to dangerous builtins like open, exec, eval
+                if isinstance(node.func, ast.Name):
+                    if node.func.id in ValidationConfig.DANGEROUS_FUNCTIONS:
+                        return False, f"Dangerous function call detected: {node.func.id}()"
+                elif isinstance(node.func, ast.Attribute):
+                    # Catch os.system etc.
+                    attr_name = node.func.attr
+                    if attr_name in ValidationConfig.DANGEROUS_FUNCTIONS:
+                        return False, f"Dangerous function call detected: {attr_name}()"
+
+        return True, None
+
+    def _get_quality_flags(self, quality: str) -> List[str]:
+        """Return manim CLI quality flags given a quality name."""
+        return RenderConfig.QUALITY_FLAGS.get(quality, RenderConfig.QUALITY_FLAGS.get("low", ["-ql"]))
+
     async def render_animation(
         self,
         code: str,
@@ -55,7 +91,7 @@ class ManimRunner:
             script_path.write_text(code)
             
             # Determine quality flags
-            quality_flags = RenderConfig.QUALITY_FLAGS.get(quality, ["-ql"])
+            quality_flags = self._get_quality_flags(quality)
             
             # Construct manim command
             cmd = [

@@ -28,9 +28,9 @@ class SubjectMatterAgent(BaseAgent):
     def _is_verbose(self) -> bool:
         return self.verbose
 
-    async def generate(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate a single expanded brief (plain text) for the Manim animator."""
-        subject_matter_input = SubjectMatterInput(**input_data)
+    async def generate_brief(self, user_prompt: str) -> Dict[str, Any]:
+        """Public entrypoint: return a dict with expanded_prompt_text and _response_id."""
+        subject_matter_input = SubjectMatterInput(user_prompt=user_prompt)
 
         try:
             if self._is_verbose():
@@ -64,13 +64,10 @@ class SubjectMatterAgent(BaseAgent):
                 user_prompt=subject_matter_input.user_prompt,
             ) from e
 
-    async def process_with_timeout(self, user_prompt: str, timeout_seconds: int = 90) -> str:
-        """Process user prompt with timeout, returning the expanded brief text."""
+    async def generate_brief_with_timeout(self, user_prompt: str, timeout_seconds: int = 90) -> str:
+        """Public entrypoint: generate_brief with timeout, returns expanded text only."""
         try:
-            output = await asyncio.wait_for(
-                self.generate({"user_prompt": user_prompt}),
-                timeout=timeout_seconds,
-            )
+            output = await asyncio.wait_for(self.generate_brief(user_prompt), timeout=timeout_seconds)
             return output["expanded_prompt_text"]
         except asyncio.TimeoutError:
             raise SubjectMatterAnalysisError(
@@ -82,3 +79,10 @@ class SubjectMatterAgent(BaseAgent):
                 f"Subject matter processing failed: {e}",
                 user_prompt=user_prompt,
             ) from e
+
+    # Backward compatibility
+    async def generate(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        return await self.generate_brief(input_data["user_prompt"]) 
+    
+    async def process_with_timeout(self, user_prompt: str, timeout_seconds: int = 90) -> str:
+        return await self.generate_brief_with_timeout(user_prompt, timeout_seconds)

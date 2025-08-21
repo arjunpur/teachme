@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional
 
 from rich.console import Console
 from ..agents.base import BaseAgent
-from ..models.schemas import AnimationOutput, ManimScriptResponse, AnimationRequest, ExpandedPrompt
+from ..models.schemas import AnimationOutput, ManimScriptResponse, AnimationRequest
 from ..utils.responses_llm_client import ResponsesLLMClient
 from ..utils.manim_runner import ManimRunner
 from ..config import RenderConfig, LLMConfig, AnimationConfig
@@ -42,8 +42,8 @@ class ManimCodeGenerator(BaseAgent):
         """Check if verbose logging is enabled."""
         return self.verbose
     
-    async def generate(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate an animation from the input data."""
+    async def generate_animation(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Public entrypoint: generate an animation from the input data."""
         # Validate input using simplified AnimationRequest
         request = AnimationRequest(**input_data)
         
@@ -85,6 +85,10 @@ class ManimCodeGenerator(BaseAgent):
             raise AnimationRenderError(
                 f"Animation generation failed: {e}"
             ) from e
+
+    # Backward compatibility alias
+    async def generate(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        return await self.generate_animation(input_data)
     
     async def _generate_and_render_with_retry(
         self, 
@@ -93,7 +97,7 @@ class ManimCodeGenerator(BaseAgent):
     ) -> tuple[ManimScriptResponse, Path]:
         """Generate and render animation with simplified retry logic."""
         
-        # Create the appropriate prompt based on enhance flag
+        # Create the appropriate prompt based on subject-matter usage
         prompt_for_generation, subject_matter_response_id = await self._create_prompt(request)
         
         # Generate initial script (start of conversation chain from subject matter agent)
@@ -162,34 +166,32 @@ class ManimCodeGenerator(BaseAgent):
         Returns:
             tuple: (prompt_text, response_id_for_chaining)
         """
-        if not request.should_enhance():
+        if request.use_subject_matter:
+            # Use subject matter agent to expand the brief
+            if self._is_verbose():
+                console.print("[blue]🧠 Analyzing subject matter...[/blue]")
+
+            # Import here to avoid circular imports
+            from ..agents.subject_matter import SubjectMatterAgent
+
+            subject_matter_agent = SubjectMatterAgent(
+                output_dir=self.output_dir,
+                llm_client=self.llm_client,
+                verbose=self.verbose
+            )
+
+            # Generate expanded brief text (single-step)
+            expansion_output = await subject_matter_agent.generate_brief(request.user_prompt)
+
+            response_id = expansion_output.get("_response_id")
+            brief_text = expansion_output["expanded_prompt_text"]
+
+            # Wrap brief for the code generator
+            from ..prompts.animation import create_animation_prompt_from_brief
+            return create_animation_prompt_from_brief(brief_text, request.style), response_id
+        else:
             # Direct prompt - format with basic animation prompt
             return create_animation_user_prompt(request.user_prompt, request.style), None
-        
-        # Enhanced prompt - use subject matter agent to expand
-        if self._is_verbose():
-            console.print("[blue]🧠 Enhancing prompt with subject matter analysis...[/blue]")
-        
-        # Import here to avoid circular imports
-        from ..agents.subject_matter import SubjectMatterAgent
-        
-        subject_matter_agent = SubjectMatterAgent(
-            output_dir=self.output_dir,
-            llm_client=self.llm_client,
-            verbose=self.verbose
-        )
-        
-        # Generate expanded brief text (single-step)
-        expansion_output = await subject_matter_agent.generate({
-            "user_prompt": request.user_prompt
-        })
-
-        response_id = expansion_output.get("_response_id")
-        brief_text = expansion_output["expanded_prompt_text"]
-
-        # Wrap brief for the code generator
-        from ..prompts.animation import create_animation_prompt_from_brief
-        return create_animation_prompt_from_brief(brief_text, request.style), response_id
     
     async def _generate_manim_script(self, prompt: str, style: str, previous_response_id: Optional[str] = None):
         """Generate a Manim script using the LLM."""
@@ -253,6 +255,11 @@ class ManimCodeGenerator(BaseAgent):
         """Call the LLM to generate or fix a Manim script."""
         try:
             # Use the new generate method to get ResponseResult with response ID
+            def _reasoning_sink(token: str) -> None:
+                # Only print in verbose mode; keep minimal formatting
+                if self._is_verbose() and token:
+                    console.print(token, style="dim")
+
             result = await self.llm_client.generate(
                 input=user_prompt,
                 instructions=system_prompt,
@@ -260,7 +267,10 @@ class ManimCodeGenerator(BaseAgent):
                 previous_response_id=previous_response_id,
                 return_response_id=True,
                 temperature=temperature,
-                max_completion_tokens=max_completion_tokens
+                max_completion_tokens=max_completion_tokens,
+                # Stream reasoning if verbose
+                stream_reasoning=self._is_verbose(),
+                on_reasoning_token=_reasoning_sink if self._is_verbose() else None
             )
             
             response = result.content
